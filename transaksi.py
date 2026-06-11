@@ -11,6 +11,7 @@ from database import (
     hapus_keranjang_item, hapus_semua_keranjang,
 )
 from data_wisata import format_harga
+from datetime import datetime as dt
 
 # ─────────────────────────────────────────────────
 #  INFO PEMBAYARAN
@@ -281,7 +282,6 @@ def proses_transaksi(pesan: str, sid: str) -> str:
             })
             if hasil["sukses"]:
                 kode = hasil["kode_booking"]
-                # Hapus dari keranjang kalau ada
                 hapus_keranjang_item(sid, trx["destinasi"])
                 teks_ok = teks_sukses(kode, trx)
                 reset_trx(sid)
@@ -309,18 +309,31 @@ def proses_transaksi(pesan: str, sid: str) -> str:
 # ─────────────────────────────────────────────────
 
 def cek_booking(kode: str) -> str:
+    # Buang prefix "BOOKING " atau "CEK " jika ikut terbawa
+    kode = kode.strip()
+    if kode.upper().startswith("BOOKING "):
+        kode = kode[8:].strip()
+    if kode.upper().startswith("CEK "):
+        kode = kode[4:].strip()
     kode = kode.upper()
+
     cek_dan_expire_satu(kode)
     data = get_transaksi(kode)
     if not data:
         return f"❌ Kode booking *{kode}* tidak ditemukan."
 
-    STATUS_EMOJI = {"pending": "⏳", "lunas": "✅", "dibatalkan": "❌"}
+    STATUS_EMOJI = {
+        "pending":    "⏳",
+        "lunas":      "✅",
+        "dibatalkan": "❌",
+        "selesai":    "🎉",
+    }
     emj = STATUS_EMOJI.get(data["status"], "❓")
 
-    tgl_pesan  = data["tanggal_pesan"].strftime("%d %b %Y %H:%M") if data["tanggal_pesan"] else "-"
-    tgl_bayar  = data["tanggal_bayar"].strftime("%d %b %Y %H:%M") if data["tanggal_bayar"] else "-"
-    tgl_expire = data["expired_at"].strftime("%d %b %Y %H:%M")    if data.get("expired_at") else "-"
+    # tanggal sudah berupa datetime object (dari get_transaksi yang sudah difix)
+    tgl_pesan  = data["tanggal_pesan"].strftime("%d %b %Y %H:%M")  if data.get("tanggal_pesan")  else "-"
+    tgl_bayar  = data["tanggal_bayar"].strftime("%d %b %Y %H:%M")  if data.get("tanggal_bayar")  else "-"
+    tgl_expire = data["expired_at"].strftime("%d %b %Y %H:%M")     if data.get("expired_at")     else "-"
 
     info_expire = ""
     if data["status"] == "pending" and data.get("expired_at"):
@@ -388,7 +401,16 @@ def lihat_keranjang(sid: str) -> str:
     for i, item in enumerate(items, 1):
         hd = format_harga(item["harga_dewasa"])
         ha = format_harga(item["harga_anak"])
-        tgl = item["ditambahkan"].strftime("%d %b %Y") if item.get("ditambahkan") else "-"
+
+        raw_tgl = item.get("ditambahkan")
+        if raw_tgl:
+            try:
+                tgl = dt.strptime(raw_tgl, "%Y-%m-%d %H:%M:%S").strftime("%d %b %Y")
+            except (ValueError, TypeError):
+                tgl = str(raw_tgl)[:10] if raw_tgl else "-"
+        else:
+            tgl = "-"
+
         baris.append(
             f"{i}. {item.get('emoji','📍')} *{item['nama_destinasi']}*\n"
             f"   📍 {item['kota'].title()}, {item['provinsi'].title()}\n"
@@ -406,7 +428,6 @@ def lihat_keranjang(sid: str) -> str:
 
 def hapus_dari_keranjang(sid: str, nama_destinasi: str) -> str:
     """Hapus satu item dari keranjang."""
-    # Cari nama yang paling cocok dari keranjang yang ada
     items = get_keranjang(sid)
     cocok = None
     for item in items:

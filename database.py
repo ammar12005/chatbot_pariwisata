@@ -1,6 +1,6 @@
 # ============================================================
 #  database.py  –  Ngapain di Rumah? (SQLite Version)
-#  Drop-in replacement untuk MySQL — kompatibel dengan Streamlit Cloud
+#  FIX: get_transaksi parse TEXT → datetime object
 # ============================================================
 
 import os
@@ -11,8 +11,6 @@ from datetime import datetime, timedelta
 from contextlib import contextmanager
 
 # ── PATH DATABASE ─────────────────────────────────────────────
-# Di Streamlit Cloud, simpan di /tmp agar bisa ditulis
-# Di lokal, simpan di folder yang sama dengan script
 if os.getenv("STREAMLIT_SHARING_MODE") or os.getenv("HOME") == "/home/appuser":
     DB_PATH = "/tmp/chatbot_pariwisata.db"
 else:
@@ -23,8 +21,8 @@ else:
 @contextmanager
 def get_connection():
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-    conn.row_factory = sqlite3.Row   # hasil sebagai dict-like
-    conn.execute("PRAGMA journal_mode=WAL")  # aman untuk multi-read
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
     try:
         yield conn
         conn.commit()
@@ -35,7 +33,7 @@ def get_connection():
         conn.close()
 
 
-# ── SETUP TABEL (jalankan otomatis saat import) ───────────────
+# ── SETUP TABEL ───────────────────────────────────────────────
 def setup_tabel():
     with get_connection() as conn:
         conn.executescript("""
@@ -78,6 +76,22 @@ def setup_tabel():
         """)
     print(f"[DB] SQLite siap → {DB_PATH}")
     return True
+
+
+# ── HELPER: parse string tanggal ke datetime ──────────────────
+def _parse_dt(val):
+    """Konversi string tanggal SQLite ke datetime object. Return None jika gagal."""
+    if val is None:
+        return None
+    if isinstance(val, datetime):
+        return val
+    if isinstance(val, str):
+        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%d"):
+            try:
+                return datetime.strptime(val, fmt)
+            except ValueError:
+                continue
+    return None
 
 
 # ── GENERATE KODE BOOKING ─────────────────────────────────────
@@ -127,12 +141,23 @@ def simpan_transaksi(data: dict) -> dict:
 
 # ── AMBIL TRANSAKSI BY KODE ───────────────────────────────────
 def get_transaksi(kode_booking: str) -> dict | None:
+    """
+    Ambil satu transaksi berdasarkan kode booking.
+    FIX: field tanggal diparse dari TEXT ke datetime object
+    agar bisa dipanggil .strftime() di transaksi.py.
+    """
     try:
         with get_connection() as conn:
             row = conn.execute(
                 "SELECT * FROM transaksi WHERE kode_booking = ?", (kode_booking,)
             ).fetchone()
-            return dict(row) if row else None
+            if not row:
+                return None
+            data = dict(row)
+            # Parse semua field tanggal ke datetime object
+            for field in ("tanggal_pesan", "tanggal_bayar", "expired_at"):
+                data[field] = _parse_dt(data.get(field))
+            return data
     except Exception:
         return None
 
@@ -151,7 +176,7 @@ def update_status(kode_booking: str, status: str) -> bool:
         return False
 
 
-# ── AUTO EXPIRE ───────────────────────────────────────────────
+# ── AUTO EXPIRE SEMUA ─────────────────────────────────────────
 def expire_transaksi_kadaluarsa() -> int:
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     try:
@@ -189,6 +214,10 @@ def cek_dan_expire_satu(kode_booking: str) -> bool:
 
 # ── AMBIL SEMUA TRANSAKSI ─────────────────────────────────────
 def get_semua_transaksi(limit: int = 50) -> list:
+    """
+    Ambil semua transaksi. Field tanggal dikembalikan sebagai string
+    agar render_histori_html di app-streamlit.py bisa memformatnya sendiri.
+    """
     try:
         with get_connection() as conn:
             rows = conn.execute(
@@ -207,7 +236,6 @@ def get_semua_transaksi(limit: int = 50) -> list:
 def simpan_keranjang(session_id: str, destinasi: dict, provinsi: str, kota: str) -> dict:
     try:
         with get_connection() as conn:
-            # Cek duplikat
             ada = conn.execute("""
                 SELECT id FROM keranjang
                 WHERE session_id = ? AND nama_destinasi = ?
