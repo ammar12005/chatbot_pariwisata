@@ -1,116 +1,87 @@
 # ============================================================
-#  database.py  –  Ngapain di Rumah?
-#  Koneksi MySQL & setup tabel transaksi + keranjang
+#  database.py  –  Ngapain di Rumah? (SQLite Version)
+#  Drop-in replacement untuk MySQL — kompatibel dengan Streamlit Cloud
 # ============================================================
 
 import os
-import mysql.connector
-from mysql.connector import Error
-from datetime import datetime, timedelta
+import sqlite3
 import random
 import string
+from datetime import datetime, timedelta
+from contextlib import contextmanager
 
-# ── KONFIGURASI DATABASE ─────────────────────────────────────
-DB_CONFIG = {
-<<<<<<< HEAD
-    "host": "localhost",
-    "user": "root",          # sesuaikan
-    "password": "",          # sesuaikan
-    "database": "chatbot_pariwisata",
-=======
-    "host": os.getenv("DB_HOST", "localhost"),
-    "user": os.getenv("DB_USER", "root"),
-    "password": os.getenv("DB_PASSWORD", ""),
-    "database": os.getenv("DB_NAME", "chatbot_pariwisata"),
->>>>>>> 878b7eb (Perbaikan keamanan: hapus file cache dan hapus kredensial hardcoded)
-    "charset": "utf8mb4",
-}
+# ── PATH DATABASE ─────────────────────────────────────────────
+# Di Streamlit Cloud, simpan di /tmp agar bisa ditulis
+# Di lokal, simpan di folder yang sama dengan script
+if os.getenv("STREAMLIT_SHARING_MODE") or os.getenv("HOME") == "/home/appuser":
+    DB_PATH = "/tmp/chatbot_pariwisata.db"
+else:
+    DB_PATH = os.path.join(os.path.dirname(__file__), "chatbot_pariwisata.db")
 
-# ── KONEKSI ──────────────────────────────────────────────────
+
+# ── KONEKSI ───────────────────────────────────────────────────
+@contextmanager
 def get_connection():
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    conn.row_factory = sqlite3.Row   # hasil sebagai dict-like
+    conn.execute("PRAGMA journal_mode=WAL")  # aman untuk multi-read
     try:
-        conn = mysql.connector.connect(**DB_CONFIG)
-        return conn
-    except Error as e:
-        print(f"[DB ERROR] Gagal konek: {e}")
-        return None
-
-
-# ── SETUP TABEL (jalankan sekali) ────────────────────────────
-def setup_tabel():
-    conn = get_connection()
-    if not conn:
-        return False
-    try:
-        cur = conn.cursor()
-
-        # Tabel transaksi utama
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS transaksi (
-                id              INT AUTO_INCREMENT PRIMARY KEY,
-                kode_booking    VARCHAR(20) NOT NULL UNIQUE,
-                session_id      VARCHAR(100),
-                nama_pemesan    VARCHAR(100),
-                no_hp           VARCHAR(20),
-                provinsi        VARCHAR(100),
-                kota            VARCHAR(100),
-                destinasi       VARCHAR(200),
-                jumlah_dewasa   INT DEFAULT 0,
-                jumlah_anak     INT DEFAULT 0,
-                harga_dewasa    INT DEFAULT 0,
-                harga_anak      INT DEFAULT 0,
-                total_bayar     INT DEFAULT 0,
-                metode_bayar    VARCHAR(50),
-                bank_tujuan     VARCHAR(50),
-                status          ENUM('pending','lunas','dibatalkan') DEFAULT 'pending',
-                tanggal_pesan   DATETIME DEFAULT CURRENT_TIMESTAMP,
-                tanggal_bayar   DATETIME NULL,
-                expired_at      DATETIME NULL,
-                catatan         TEXT
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-        """)
-
-        # Tambah kolom expired_at jika tabel sudah ada tapi kolom belum ada
-        try:
-            cur.execute("""
-                ALTER TABLE transaksi
-                ADD COLUMN IF NOT EXISTS expired_at DATETIME NULL
-                AFTER tanggal_bayar;
-            """)
-        except Error:
-            pass  # kolom sudah ada, abaikan
-
-        # ── Tabel keranjang (wishlist destinasi yang disimpan) ──
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS keranjang (
-                id            INT AUTO_INCREMENT PRIMARY KEY,
-                session_id    VARCHAR(100) NOT NULL,
-                provinsi      VARCHAR(100),
-                kota          VARCHAR(100),
-                nama_destinasi VARCHAR(200),
-                harga_dewasa  INT DEFAULT 0,
-                harga_anak    INT DEFAULT 0,
-                emoji         VARCHAR(10),
-                deskripsi     TEXT,
-                jam_buka      VARCHAR(100),
-                ditambahkan   DATETIME DEFAULT CURRENT_TIMESTAMP
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-        """)
-
+        yield conn
         conn.commit()
-        print("[DB] Tabel 'transaksi' dan 'keranjang' siap.")
-        return True
-    except Error as e:
-        print(f"[DB ERROR] setup_tabel: {e}")
-        return False
+    except Exception as e:
+        conn.rollback()
+        raise e
     finally:
-        cur.close()
         conn.close()
+
+
+# ── SETUP TABEL (jalankan otomatis saat import) ───────────────
+def setup_tabel():
+    with get_connection() as conn:
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS transaksi (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                kode_booking    TEXT NOT NULL UNIQUE,
+                session_id      TEXT,
+                nama_pemesan    TEXT,
+                no_hp           TEXT,
+                provinsi        TEXT,
+                kota            TEXT,
+                destinasi       TEXT,
+                jumlah_dewasa   INTEGER DEFAULT 0,
+                jumlah_anak     INTEGER DEFAULT 0,
+                harga_dewasa    INTEGER DEFAULT 0,
+                harga_anak      INTEGER DEFAULT 0,
+                total_bayar     INTEGER DEFAULT 0,
+                metode_bayar    TEXT,
+                bank_tujuan     TEXT,
+                status          TEXT DEFAULT 'pending',
+                tanggal_pesan   TEXT DEFAULT (datetime('now','localtime')),
+                tanggal_bayar   TEXT,
+                expired_at      TEXT,
+                catatan         TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS keranjang (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id      TEXT NOT NULL,
+                provinsi        TEXT,
+                kota            TEXT,
+                nama_destinasi  TEXT,
+                harga_dewasa    INTEGER DEFAULT 0,
+                harga_anak      INTEGER DEFAULT 0,
+                emoji           TEXT,
+                deskripsi       TEXT,
+                jam_buka        TEXT,
+                ditambahkan     TEXT DEFAULT (datetime('now','localtime'))
+            );
+        """)
+    print(f"[DB] SQLite siap → {DB_PATH}")
+    return True
 
 
 # ── GENERATE KODE BOOKING ─────────────────────────────────────
 def generate_kode_booking() -> str:
-    """Hasilkan kode booking unik, contoh: WB-A3X9-2024"""
     huruf = ''.join(random.choices(string.ascii_uppercase, k=2))
     angka = ''.join(random.choices(string.digits, k=2))
     kode  = ''.join(random.choices(string.ascii_uppercase + string.digits, k=4))
@@ -118,156 +89,115 @@ def generate_kode_booking() -> str:
     return f"WB-{huruf}{angka}{kode}-{tahun}"
 
 
-# ── SIMPAN TRANSAKSI ─────────────────────────────────────────
+# ── SIMPAN TRANSAKSI ──────────────────────────────────────────
 def simpan_transaksi(data: dict) -> dict:
-    conn = get_connection()
-    if not conn:
-        return {"sukses": False, "pesan": "Koneksi database gagal."}
-
     kode       = generate_kode_booking()
-    expired_at = datetime.now() + timedelta(hours=24)
-
+    expired_at = (datetime.now() + timedelta(hours=24)).strftime("%Y-%m-%d %H:%M:%S")
     try:
-        cur = conn.cursor()
-        cur.execute("""
-            INSERT INTO transaksi
-              (kode_booking, session_id, nama_pemesan, no_hp,
-               provinsi, kota, destinasi,
-               jumlah_dewasa, jumlah_anak,
-               harga_dewasa, harga_anak, total_bayar,
-               metode_bayar, bank_tujuan, status, expired_at)
-            VALUES
-              (%s,%s,%s,%s, %s,%s,%s, %s,%s, %s,%s,%s, %s,%s,'pending',%s)
-        """, (
-            kode,
-            data.get("session_id", ""),
-            data.get("nama_pemesan", ""),
-            data.get("no_hp", ""),
-            data.get("provinsi", ""),
-            data.get("kota", ""),
-            data.get("destinasi", ""),
-            data.get("jumlah_dewasa", 0),
-            data.get("jumlah_anak", 0),
-            data.get("harga_dewasa", 0),
-            data.get("harga_anak", 0),
-            data.get("total_bayar", 0),
-            data.get("metode_bayar", ""),
-            data.get("bank_tujuan", ""),
-            expired_at,
-        ))
-        conn.commit()
+        with get_connection() as conn:
+            conn.execute("""
+                INSERT INTO transaksi
+                  (kode_booking, session_id, nama_pemesan, no_hp,
+                   provinsi, kota, destinasi,
+                   jumlah_dewasa, jumlah_anak,
+                   harga_dewasa, harga_anak, total_bayar,
+                   metode_bayar, bank_tujuan, status, expired_at)
+                VALUES (?,?,?,?, ?,?,?, ?,?, ?,?,?, ?,?,'pending',?)
+            """, (
+                kode,
+                data.get("session_id", ""),
+                data.get("nama_pemesan", ""),
+                data.get("no_hp", ""),
+                data.get("provinsi", ""),
+                data.get("kota", ""),
+                data.get("destinasi", ""),
+                data.get("jumlah_dewasa", 0),
+                data.get("jumlah_anak", 0),
+                data.get("harga_dewasa", 0),
+                data.get("harga_anak", 0),
+                data.get("total_bayar", 0),
+                data.get("metode_bayar", ""),
+                data.get("bank_tujuan", ""),
+                expired_at,
+            ))
         return {"sukses": True, "kode_booking": kode, "pesan": "Transaksi berhasil disimpan."}
-    except Error as e:
-        conn.rollback()
+    except Exception as e:
         return {"sukses": False, "pesan": str(e)}
-    finally:
-        cur.close()
-        conn.close()
 
 
 # ── AMBIL TRANSAKSI BY KODE ───────────────────────────────────
 def get_transaksi(kode_booking: str) -> dict | None:
-    conn = get_connection()
-    if not conn:
-        return None
     try:
-        cur = conn.cursor(dictionary=True)
-        cur.execute("SELECT * FROM transaksi WHERE kode_booking = %s", (kode_booking,))
-        return cur.fetchone()
-    except Error:
+        with get_connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM transaksi WHERE kode_booking = ?", (kode_booking,)
+            ).fetchone()
+            return dict(row) if row else None
+    except Exception:
         return None
-    finally:
-        cur.close()
-        conn.close()
 
 
 # ── UPDATE STATUS TRANSAKSI ───────────────────────────────────
 def update_status(kode_booking: str, status: str) -> bool:
-    conn = get_connection()
-    if not conn:
-        return False
+    tgl = datetime.now().strftime("%Y-%m-%d %H:%M:%S") if status == "lunas" else None
     try:
-        cur = conn.cursor()
-        tgl = datetime.now() if status == "lunas" else None
-        cur.execute(
-            "UPDATE transaksi SET status=%s, tanggal_bayar=%s WHERE kode_booking=%s",
-            (status, tgl, kode_booking)
-        )
-        conn.commit()
+        with get_connection() as conn:
+            conn.execute(
+                "UPDATE transaksi SET status=?, tanggal_bayar=? WHERE kode_booking=?",
+                (status, tgl, kode_booking)
+            )
         return True
-    except Error:
+    except Exception:
         return False
-    finally:
-        cur.close()
-        conn.close()
 
 
 # ── AUTO EXPIRE ───────────────────────────────────────────────
 def expire_transaksi_kadaluarsa() -> int:
-    conn = get_connection()
-    if not conn:
-        return 0
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     try:
-        cur = conn.cursor()
-        cur.execute("""
-            UPDATE transaksi
-            SET status = 'dibatalkan'
-            WHERE status = 'pending'
-              AND expired_at IS NOT NULL
-              AND expired_at < NOW()
-        """)
-        conn.commit()
-        return cur.rowcount
-    except Error as e:
+        with get_connection() as conn:
+            cur = conn.execute("""
+                UPDATE transaksi
+                SET status = 'dibatalkan'
+                WHERE status = 'pending'
+                  AND expired_at IS NOT NULL
+                  AND expired_at < ?
+            """, (now,))
+            return cur.rowcount
+    except Exception as e:
         print(f"[DB ERROR] expire_transaksi_kadaluarsa: {e}")
         return 0
-    finally:
-        cur.close()
-        conn.close()
 
 
 # ── CEK DAN EXPIRE SATU TRANSAKSI ────────────────────────────
 def cek_dan_expire_satu(kode_booking: str) -> bool:
-    conn = get_connection()
-    if not conn:
-        return False
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     try:
-        cur = conn.cursor()
-        cur.execute("""
-            UPDATE transaksi
-            SET status = 'dibatalkan'
-            WHERE kode_booking = %s
-              AND status = 'pending'
-              AND expired_at IS NOT NULL
-              AND expired_at < NOW()
-        """, (kode_booking,))
-        conn.commit()
-        return cur.rowcount > 0
-    except Error as e:
-        print(f"[DB ERROR] cek_dan_expire_satu: {e}")
+        with get_connection() as conn:
+            cur = conn.execute("""
+                UPDATE transaksi
+                SET status = 'dibatalkan'
+                WHERE kode_booking = ?
+                  AND status = 'pending'
+                  AND expired_at IS NOT NULL
+                  AND expired_at < ?
+            """, (kode_booking, now))
+            return cur.rowcount > 0
+    except Exception:
         return False
-    finally:
-        cur.close()
-        conn.close()
 
 
 # ── AMBIL SEMUA TRANSAKSI ─────────────────────────────────────
 def get_semua_transaksi(limit: int = 50) -> list:
-    conn = get_connection()
-    if not conn:
-        return []
     try:
-        cur = conn.cursor(dictionary=True)
-        cur.execute(
-            "SELECT * FROM transaksi ORDER BY tanggal_pesan DESC LIMIT %s",
-            (limit,)
-        )
-        return cur.fetchall()
-    except Error:
+        with get_connection() as conn:
+            rows = conn.execute(
+                "SELECT * FROM transaksi ORDER BY tanggal_pesan DESC LIMIT ?",
+                (limit,)
+            ).fetchall()
+            return [dict(r) for r in rows]
+    except Exception:
         return []
-    finally:
-        cur.close()
-        conn.close()
 
 
 # ═══════════════════════════════════════════════════════════
@@ -275,106 +205,76 @@ def get_semua_transaksi(limit: int = 50) -> list:
 # ═══════════════════════════════════════════════════════════
 
 def simpan_keranjang(session_id: str, destinasi: dict, provinsi: str, kota: str) -> dict:
-    """
-    Simpan satu destinasi ke tabel keranjang milik session ini.
-    Cek duplikat — jika sudah ada, kembalikan pesan sudah tersimpan.
-    """
-    conn = get_connection()
-    if not conn:
-        return {"sukses": False, "pesan": "Koneksi database gagal."}
     try:
-        cur = conn.cursor(dictionary=True)
+        with get_connection() as conn:
+            # Cek duplikat
+            ada = conn.execute("""
+                SELECT id FROM keranjang
+                WHERE session_id = ? AND nama_destinasi = ?
+            """, (session_id, destinasi["nama"])).fetchone()
 
-        # Cek duplikat
-        cur.execute("""
-            SELECT id FROM keranjang
-            WHERE session_id = %s AND nama_destinasi = %s
-        """, (session_id, destinasi["nama"]))
-        if cur.fetchone():
-            return {"sukses": False, "pesan": "sudah_ada"}
+            if ada:
+                return {"sukses": False, "pesan": "sudah_ada"}
 
-        cur.execute("""
-            INSERT INTO keranjang
-              (session_id, provinsi, kota, nama_destinasi,
-               harga_dewasa, harga_anak, emoji, deskripsi, jam_buka)
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
-        """, (
-            session_id,
-            provinsi,
-            kota,
-            destinasi["nama"],
-            destinasi.get("harga_dewasa", 0),
-            destinasi.get("harga_anak", 0),
-            destinasi.get("emoji", "📍"),
-            destinasi.get("deskripsi", ""),
-            destinasi.get("jam_buka", "-"),
-        ))
-        conn.commit()
+            conn.execute("""
+                INSERT INTO keranjang
+                  (session_id, provinsi, kota, nama_destinasi,
+                   harga_dewasa, harga_anak, emoji, deskripsi, jam_buka)
+                VALUES (?,?,?,?,?,?,?,?,?)
+            """, (
+                session_id,
+                provinsi,
+                kota,
+                destinasi["nama"],
+                destinasi.get("harga_dewasa", 0),
+                destinasi.get("harga_anak", 0),
+                destinasi.get("emoji", "📍"),
+                destinasi.get("deskripsi", ""),
+                destinasi.get("jam_buka", "-"),
+            ))
         return {"sukses": True, "pesan": "Destinasi berhasil disimpan ke keranjang."}
-    except Error as e:
-        conn.rollback()
+    except Exception as e:
         return {"sukses": False, "pesan": str(e)}
-    finally:
-        cur.close()
-        conn.close()
 
 
 def get_keranjang(session_id: str) -> list:
-    """Ambil semua item keranjang milik session ini."""
-    conn = get_connection()
-    if not conn:
-        return []
     try:
-        cur = conn.cursor(dictionary=True)
-        cur.execute("""
-            SELECT * FROM keranjang
-            WHERE session_id = %s
-            ORDER BY ditambahkan DESC
-        """, (session_id,))
-        return cur.fetchall()
-    except Error:
+        with get_connection() as conn:
+            rows = conn.execute("""
+                SELECT * FROM keranjang
+                WHERE session_id = ?
+                ORDER BY ditambahkan DESC
+            """, (session_id,)).fetchall()
+            return [dict(r) for r in rows]
+    except Exception:
         return []
-    finally:
-        cur.close()
-        conn.close()
 
 
 def hapus_keranjang_item(session_id: str, nama_destinasi: str) -> bool:
-    """Hapus satu item dari keranjang berdasarkan nama destinasi."""
-    conn = get_connection()
-    if not conn:
-        return False
     try:
-        cur = conn.cursor()
-        cur.execute("""
-            DELETE FROM keranjang
-            WHERE session_id = %s AND nama_destinasi = %s
-        """, (session_id, nama_destinasi))
-        conn.commit()
-        return cur.rowcount > 0
-    except Error:
+        with get_connection() as conn:
+            cur = conn.execute("""
+                DELETE FROM keranjang
+                WHERE session_id = ? AND nama_destinasi = ?
+            """, (session_id, nama_destinasi))
+            return cur.rowcount > 0
+    except Exception:
         return False
-    finally:
-        cur.close()
-        conn.close()
 
 
 def hapus_semua_keranjang(session_id: str) -> bool:
-    """Kosongkan seluruh keranjang milik session ini."""
-    conn = get_connection()
-    if not conn:
-        return False
     try:
-        cur = conn.cursor()
-        cur.execute("DELETE FROM keranjang WHERE session_id = %s", (session_id,))
-        conn.commit()
+        with get_connection() as conn:
+            conn.execute("DELETE FROM keranjang WHERE session_id = ?", (session_id,))
         return True
-    except Error:
+    except Exception:
         return False
-    finally:
-        cur.close()
-        conn.close()
+
+
+# ── Auto setup saat pertama kali diimport ─────────────────────
+setup_tabel()
 
 
 if __name__ == "__main__":
-    setup_tabel()
+    print(f"Database path: {DB_PATH}")
+    print("Setup selesai!")
