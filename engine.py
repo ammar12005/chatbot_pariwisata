@@ -405,3 +405,31 @@ if __name__ == "__main__":
     print(proses_pesan("simpan Goa Kreo", test_sesi))
     print("\n" + "=" * 60 + "\n")
     print(proses_pesan("keranjang", test_sesi))
+
+    # Tambahkan ini di akhir engine.py
+class ChatbotEngine:
+    def detect_intent(self, user_input):
+        # Anda bisa memetakan logika dari proses_pesan ke intent
+        # Ini contoh sederhana, sesuaikan dengan kebutuhan logikanya
+        t = user_input.lower()
+        if "reset" in t: return "RESET"
+        if "paket" in t or "menu" in t: return "ASK_MENU"
+        if "bayar" in t: return "CHECKOUT"
+        if "ya" in t: return "YES"
+        if "tidak" in t or "batal" in t: return "NO"
+        if "batalkan" in t: return "REDUCE_ITEM"
+        return "ORDER" # Default
+
+    def format_menu(self):
+        return daftar_provinsi_teks()
+
+    def format_receipt(self, cart):
+        return f"Total pesanan Anda: {len(cart)} item."
+
+    def parse_reduce(self, user_input):
+        # Sesuaikan dengan cara Anda memparsing input pengurangan
+        return {"item": "bromo", "qty": 1} 
+
+    def parse_orders(self, user_input):
+        # Sesuaikan dengan cara Anda memparsing input pemesanan
+        return [{"item": "bromo", "qty": 1, "emoji": "🌋", "price": 100000}]

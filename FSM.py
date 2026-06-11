@@ -1,5 +1,5 @@
 from enum import Enum, auto
-from engine import ChatbotEngine as NLPEngine
+from engine import ChatbotEngine
 
 
 class State(Enum):

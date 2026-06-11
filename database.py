@@ -3,6 +3,7 @@
 #  Koneksi MySQL & setup tabel transaksi + keranjang
 # ============================================================
 
+import os
 import mysql.connector
 from mysql.connector import Error
 from datetime import datetime, timedelta
@@ -11,10 +12,17 @@ import string
 
 # ── KONFIGURASI DATABASE ─────────────────────────────────────
 DB_CONFIG = {
+<<<<<<< HEAD
     "host": "localhost",
     "user": "root",          # sesuaikan
     "password": "",          # sesuaikan
     "database": "chatbot_pariwisata",
+=======
+    "host": os.getenv("DB_HOST", "localhost"),
+    "user": os.getenv("DB_USER", "root"),
+    "password": os.getenv("DB_PASSWORD", ""),
+    "database": os.getenv("DB_NAME", "chatbot_pariwisata"),
+>>>>>>> 878b7eb (Perbaikan keamanan: hapus file cache dan hapus kredensial hardcoded)
     "charset": "utf8mb4",
 }
 
