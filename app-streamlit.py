@@ -51,25 +51,33 @@ def handle_prompt(prompt: str):
     if pl in ("hapus semua keranjang","kosongkan keranjang","kosongkan wishlist","clear keranjang"):
         if DB_AVAILABLE:
             hapus_semua_keranjang(SESSION_ID)
+            
     elif pl.startswith("hapus keranjang "):
         proses_pesan(prompt, SESSION_ID)
+        
     elif pl.startswith("simpan "):
         resp = proses_pesan(prompt, SESSION_ID)
         st.session_state.messages.append({"role": "assistant", "content": resp})
-    elif pl.startswith("pesan "):
+        
+    elif pl.startswith("pesan ") or pl == "konfirmasi":
+        # Jika user mengetik/mengklik "konfirmasi", langsung bypass ke penanganan pesanan selesai
         resp = proses_pesan(prompt, SESSION_ID)
         st.session_state.messages.append({"role": "user",      "content": prompt})
         st.session_state.messages.append({"role": "assistant", "content": resp})
-        if "Pesanan Berhasil Dibuat" in resp or "Booking Berhasil" in resp:
-            st.session_state.messages = [{"role": "assistant", "content": SALAM_AWAL}]
-            reset_sesi(SESSION_ID)
+        
+        # Bersihkan bubble chat di atasnya dan sisakan template sukses/salam awal
+        st.session_state.messages = [{"role": "assistant", "content": resp}]
+        reset_sesi(SESSION_ID)
+        
     else:
         resp = proses_pesan(prompt, SESSION_ID)
         st.session_state.messages.append({"role": "user",      "content": prompt})
         st.session_state.messages.append({"role": "assistant", "content": resp})
-        if "Pesanan Berhasil Dibuat" in resp or "Booking Berhasil" in resp:
-            # Opsional: Jika ingin mereset setelah sukses, pastikan card sempat terlihat
-            pass
+        
+        # Pengecekan cadangan jika teks balasan engine mengandung indikasi sukses
+        if "Pesanan Berhasil Dibuat" in resp or "Booking Berhasil" in resp or "Kode Booking" in resp:
+            st.session_state.messages = [{"role": "assistant", "content": resp}]
+            reset_sesi(SESSION_ID)
 
 # ─── Terima input dari st.chat_input (HARUS sebelum render HTML) ──────────────
 if prompt := st.chat_input("Ketik destinasi atau 'provinsi'...", key="main_input"):
@@ -284,7 +292,6 @@ for msg in st.session_state.messages:
 
 
 # ─── MASTER HTML ──────────────────────────────────────────────────────────────
-# Menggunakan tanda kurung kurawal ganda {{ }} untuk syntax CSS & JS agar aman dari parse f-string Python
 full_html = f"""
 <style>
 @import url('https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css');
@@ -321,7 +328,7 @@ body{{margin:0;padding:0;width:100%;height:100%;background-image:url('{bg_base64
 .cart-header-btn{{width:38px;height:38px;background:var(--w);border-radius:50%;display:flex;align-items:center;justify-content:center;color:var(--tt);font-size:14px;cursor:pointer;border:none;transition:all 0.2s;position:relative}}
 .cart-header-btn:hover,.cart-header-btn.active{{background:var(--tt);color:white}}
 .cart-badge{{position:absolute;top:-4px;right:-4px;background:var(--r);color:white;font-size:10px;font-weight:700;width:18px;height:18px;border-radius:50%;display:flex;align-items:center;justify-content:center;border:2px solid white}}
-.cart-panel{{display:none;position:absolute;top:74px;right:24px;width:340px;background:var(--w);border-radius:18px;box-shadow:0 16px 40px rgba(0,0,0,0.14);z-index:1000;overflow:hidden;border:1px solid rgba(0,91,92,0.12)}}
+.cart-panel{{display:none;position:absolute;top:74px;right:24px;width:340px;background:var(--w);border-radius:18px;box-shadow:0 16px 40px rgba(0,0,0,0.14);z-index:1001;overflow:hidden;border:1px solid rgba(0,91,92,0.12)}}
 .cart-panel.open{{display:block}}
 .cart-panel-header{{padding:16px 20px;background:var(--tt);color:white;display:flex;align-items:center;justify-content:space-between}}
 .cart-panel-header h4{{margin:0;font-size:15px;font-weight:700}}
@@ -372,8 +379,8 @@ body{{margin:0;padding:0;width:100%;height:100%;background-image:url('{bg_base64
 .custom-input-btn:hover{{background:#0D7A7B}}
 ::-webkit-scrollbar{{width:5px}}
 ::-webkit-scrollbar-thumb{{background:rgba(0,91,92,0.2);border-radius:10px}}
-.cart-overlay{{display:none;position:fixed;inset:0;z-index:999}}
-.cart-overlay.open{{display:block}}
+.cart-overlay{{display:none;position:fixed;inset:0;z-index:1000;pointer-events:none}}
+.cart-overlay.open{{display:block;pointer-events:all}}
 </style>
 
 <div class="cart-overlay" id="cartOverlay" onclick="tutupKeranjang()"></div>
@@ -451,98 +458,112 @@ function tutupKeranjang() {{
     document.getElementById('cartOverlay').classList.remove('open');
 }}
 
-function findChatInput() {{
-    var docs = [document];
-    try {{ if (window.parent && window.parent.document) docs.push(window.parent.document); }} catch(e) {{}}
-    try {{ if (window.top && window.top.document) docs.push(window.top.document); }} catch(e) {{}}
+// ─── CORE: kirim pesan ────────────────────────────────────────────────────
+function sendMsg(text) {{
+    if (!text || !text.trim()) return;
+    text = text.trim();
+    _injectToStreamlit(text);
+}}
 
-    if (window.parent) {{
-        try {{
-            var allIframes = window.parent.document.querySelectorAll('iframe');
-            for (var i = 0; i < allIframes.length; i++) {{
-                try {{
-                    var d = allIframes[i].contentDocument || allIframes[i].contentWindow.document;
-                    if (d && docs.indexOf(d) === -1) docs.push(d);
-                }} catch(e) {{}}
-            }}
-        }} catch(e) {{}}
-    }}
+function _injectToStreamlit(text) {{
+    // Kumpulkan semua document yang bisa diakses
+    var docs = [];
+    try {{ docs.push(window.parent.document); }} catch(e) {{}}
+    try {{ if (window.top !== window.parent) docs.push(window.top.document); }} catch(e) {{}}
+    docs.push(document);
+
+    // Cari juga di semua iframe saudara
+    try {{
+        var iframes = window.parent.document.querySelectorAll('iframe');
+        for (var i = 0; i < iframes.length; i++) {{
+            try {{
+                var d = iframes[i].contentDocument;
+                if (d) docs.push(d);
+            }} catch(e) {{}}
+        }}
+    }} catch(e) {{}}
 
     var selectors = [
         'textarea[data-testid="stChatInputTextArea"]',
         '[data-testid="stChatInput"] textarea',
-        'textarea[placeholder*="Ketik destinasi"]',
-        '.stChatInput textarea',
-        'textarea'
+        'textarea[placeholder*="Ketik"]',
+        'textarea[placeholder*="destinasi"]',
     ];
 
-    for (var d = 0; d < docs.length; d++) {{
-        for (var s = 0; s < selectors.length; s++) {{
+    for (var di = 0; di < docs.length; di++) {{
+        for (var si = 0; si < selectors.length; si++) {{
             try {{
-                var el = docs[d].querySelector(selectors[s]);
-                if (el && el.id !== 'uiInput') return el;
+                var el = docs[di] && docs[di].querySelector(selectors[si]);
+                if (el && el.id !== 'uiInput') {{
+                    console.log("✅ Textarea ditemukan, inject:", text);
+                    _doInject(el, text);
+                    return;
+                }}
             }} catch(e) {{}}
         }}
     }}
-    return null;
+    console.error("❌ Textarea Streamlit tidak ditemukan");
 }}
 
-function fireToInput(text) {{
-    if (!text) return;
-    var el = findChatInput();
-    if (!el) {{
-        console.error("Input Streamlit native tidak ditemukan.");
-        return;
-    }}
-    
+function _doInject(el, text) {{
+    // Set value pakai native setter agar React mendeteksi perubahan
     try {{
-        var proto = el.ownerDocument.defaultView.HTMLTextAreaElement.prototype;
-        var setter = Object.getOwnPropertyDescriptor(proto, 'value');
-        if (setter && setter.set) {{
-            setter.set.call(el, text);
-        }} else {{
-            el.value = text;
-        }}
-    }} catch(e) {{
-        el.value = text;
-    }}
-    
+        var win  = el.ownerDocument.defaultView;
+        var desc = Object.getOwnPropertyDescriptor(win.HTMLTextAreaElement.prototype, 'value');
+        if (desc && desc.set) desc.set.call(el, text);
+        else el.value = text;
+    }} catch(e) {{ el.value = text; }}
+
     el.dispatchEvent(new Event('input',  {{ bubbles: true, composed: true }}));
     el.dispatchEvent(new Event('change', {{ bubbles: true, composed: true }}));
-    
+
+    // Submit setelah React update
     setTimeout(function() {{
+        var btn = null;
         try {{
             var form = el.closest('form') || el.form;
-            var submitBtn = form ? (form.querySelector('button[data-testid="stChatInputSubmitButton"]') || form.querySelector('button')) : null;
-            if (submitBtn) {{
-                submitBtn.disabled = false;
-                submitBtn.click();
-            }} else {{
-                var enterEvent = new KeyboardEvent('keydown', {{
-                    key: 'Enter', keyCode: 13, code: 'Enter', which: 13, bubbles: true, cancelable: true, composed: true
-                }});
-                el.dispatchEvent(enterEvent);
+            if (form) {{
+                btn = form.querySelector('button[data-testid="stChatInputSubmitButton"]')
+                   || form.querySelector('button[type="submit"]')
+                   || form.querySelector('button');
             }}
-        }} catch(e) {{
-            console.error("Gagal submit form:", e);
+        }} catch(e) {{}}
+
+        if (!btn) {{
+            try {{
+                btn = el.ownerDocument.querySelector('button[data-testid="stChatInputSubmitButton"]');
+            }} catch(e) {{}}
+        }}
+
+        if (btn) {{
+            btn.disabled = false;
+            btn.click();
+            console.log("✅ Submit button diklik");
+        }} else {{
+            el.dispatchEvent(new KeyboardEvent('keydown', {{
+                key: 'Enter', keyCode: 13, code: 'Enter', which: 13,
+                bubbles: true, cancelable: true, composed: true
+            }}));
+            el.dispatchEvent(new KeyboardEvent('keyup', {{
+                key: 'Enter', keyCode: 13, code: 'Enter', which: 13,
+                bubbles: true, cancelable: true, composed: true
+            }}));
+            console.log("✅ Enter keydown dikirim");
         }}
     }}, 100);
-}}
-
-function sendMsg(text) {{
-    fireToInput(text);
 }}
 
 function submitChat() {{
     var uiInp = document.getElementById('uiInput');
     if (!uiInp) return;
-    var text = uiInp.value.strip ? uiInp.value.strip() : uiInp.value.trim();
+    var text = uiInp.value.trim();
     if (!text) return;
-    
-    fireToInput(text);
+    sendMsg(text);
     uiInp.value = '';
+    uiInp.focus();
 }}
 
+// ─── Auto-scroll ──────────────────────────────────────────────────────────
 var c = document.getElementById('chatMessages'); if(c) c.scrollTop = c.scrollHeight;
 var h = document.getElementById('historyList');  if(h) h.scrollTop = h.scrollHeight;
 </script>
