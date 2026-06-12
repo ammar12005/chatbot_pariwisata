@@ -60,16 +60,16 @@ def handle_prompt(prompt: str):
         resp = proses_pesan(prompt, SESSION_ID)
         st.session_state.messages.append({"role": "user",      "content": prompt})
         st.session_state.messages.append({"role": "assistant", "content": resp})
-        if "Pesanan Berhasil Dibuat" in resp:
+        if "Pesanan Berhasil Dibuat" in resp or "Booking Berhasil" in resp:
             st.session_state.messages = [{"role": "assistant", "content": SALAM_AWAL}]
             reset_sesi(SESSION_ID)
     else:
         resp = proses_pesan(prompt, SESSION_ID)
         st.session_state.messages.append({"role": "user",      "content": prompt})
         st.session_state.messages.append({"role": "assistant", "content": resp})
-        if "Pesanan Berhasil Dibuat" in resp:
-            st.session_state.messages = [{"role": "assistant", "content": SALAM_AWAL}]
-            reset_sesi(SESSION_ID)
+        if "Pesanan Berhasil Dibuat" in resp or "Booking Berhasil" in resp:
+            # Opsional: Jika ingin mereset setelah sukses, pastikan card sempat terlihat
+            pass
 
 # ─── Terima input dari st.chat_input (HARUS sebelum render HTML) ──────────────
 if prompt := st.chat_input("Ketik destinasi atau 'provinsi'...", key="main_input"):
@@ -171,7 +171,6 @@ def render_histori_html():
                      else "#E74C3C" if status.lower() in ('dibatalkan','batal','cancelled') \
                      else "#F39C12"
                      
-            # Escape single quote agar aman saat dipassing ke fungsi JavaScript onclick
             kd_esc = kode.replace("'", "\\'")
             
             html += f"""<button class="history-item" onclick="sendMsg('cek booking {kd_esc}')">
@@ -207,7 +206,6 @@ def render_keranjang_html():
             dw_f  = f"Rp {int(dw):,}".replace(",", ".") if dw else ""
             an_f  = f"Rp {int(an):,}".replace(",", ".") if an else ""
             
-            # Escape nama untuk parameter Javascript onclick agar kutip tidak patah
             ns    = nama.replace("'", "\\'").replace('"', '\\"')
             
             html += f"""<div class="cart-item">
@@ -240,7 +238,7 @@ def format_bubble(teks):
 
 
 # ─── Kompilasi data ───────────────────────────────────────────────────────────
-histori_html  = render_histori_html()
+histori_html   = render_histori_html()
 keranjang_html = render_keranjang_html()
 jml = len(get_keranjang(SESSION_ID)) if DB_AVAILABLE else 0
 badge = f'<span class="cart-badge">{jml}</span>' if jml > 0 else ''
@@ -256,13 +254,17 @@ for msg in st.session_state.messages:
     role  = msg["role"]
     teks  = msg["content"]
     waktu = datetime.now().strftime("%H.%M")
-    if role == "assistant" and "Pesanan Berhasil Dibuat" in teks:
-        km = re.search(r"Kode Booking\s*[:\-]\s*\*?([A-Z0-9\-]+)\*?", teks)
-        dm = re.search(r"Destinasi\s*[:\-]\s*(.+)", teks)
-        tm = re.search(r"Total Bayar\s*[:\-]\s*(.+)", teks)
-        kode = km.group(1).strip() if km else "-"
-        dest = dm.group(1).strip() if dm else "-"
+    
+    # Deteksi jika terdapat indikasi pesanan berhasil di dalam teks bot
+    if role == "assistant" and ("Pesanan Berhasil Dibuat" in teks or "Booking Berhasil" in teks or "Kode Booking" in teks):
+        km = re.search(r"Kode Booking\s*[:\-]\s*\*?([A-Z0-9\-]+)\*?", teks, re.IGNORECASE)
+        dm = re.search(r"Destinasi\s*[:\-]\s*([^*\n]+)", teks, re.IGNORECASE)
+        tm = re.search(r"Total Bayar\s*[:\-]\s*([^*\n]+)", teks, re.IGNORECASE)
+        
+        kode = km.group(1).strip() if km else "SUCCESS"
+        dest = dm.group(1).strip() if dm else "Destinasi Pilihan"
         tot  = tm.group(1).strip() if tm else ""
+        
         bubbles += f"""<div class="msg-row bot"><div class="bot-avatar-chat"></div>
             <div class="success-card">
                 <div class="success-icon">✅🌴</div>
@@ -273,6 +275,7 @@ for msg in st.session_state.messages:
                 <div class="success-cta">Lihat histori di sidebar.</div>
             </div></div>"""
         continue
+        
     t = format_bubble(teks)
     if role == "assistant":
         bubbles += f'<div class="msg-row bot"><div class="bot-avatar-chat"></div><div class="bubble bot">{t}<small>{waktu}</small></div></div>'
@@ -281,6 +284,7 @@ for msg in st.session_state.messages:
 
 
 # ─── MASTER HTML ──────────────────────────────────────────────────────────────
+# Menggunakan tanda kurung kurawal ganda {{ }} untuk syntax CSS & JS agar aman dari parse f-string Python
 full_html = f"""
 <style>
 @import url('https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css');
@@ -354,11 +358,11 @@ body{{margin:0;padding:0;width:100%;height:100%;background-image:url('{bg_base64
 .bubble.user{{background:var(--tt);color:white;border-top-right-radius:4px}}
 .bubble.bot{{background:var(--w);color:var(--tg);border-top-left-radius:4px}}
 .bubble small{{display:block;font-size:10px;text-align:right;margin-top:6px;opacity:.5}}
-.success-card{{background:var(--w);border-radius:18px;padding:28px 24px;text-align:center;box-shadow:0 4px 12px rgba(0,0,0,0.04);max-width:70%;margin:0 auto}}
+.success-card{{background:var(--w);border-radius:18px;padding:28px 24px;text-align:center;box-shadow:0 4px 12px rgba(0,0,0,0.04);max-width:70%;margin:10px auto;border:1px solid #E4F2F1}}
 .success-icon{{font-size:40px;margin-bottom:8px}}
 .success-title{{color:var(--tt);font-size:18px;font-weight:700;margin-bottom:10px}}
 .success-detail{{font-size:13px;color:var(--ts);line-height:1.6;margin-bottom:8px}}
-.success-kode{{display:inline-block;background:var(--tl);color:var(--tt);font-family:monospace;font-size:15px;font-weight:700;padding:6px 16px;border-radius:8px;letter-spacing:1px;margin:6px 0 10px 0}}
+.success-kode{{display:inline-block;background:var(--tl);color:var(--tt);font-family:monospace;font-size:15px;font-weight:700;padding:6px 16px;border-radius:8px;letter-spacing:1px;margin:6px 0 10px 0;border:1px solid rgba(0,91,92,0.15)}}
 .success-cta{{font-size:13px;color:var(--tm);font-weight:600}}
 .custom-input-container{{position:absolute;bottom:28px;left:0;right:0;display:flex;justify-content:center;padding:0 24px;z-index:9999}}
 .custom-input-wrapper{{display:flex;align-items:center;width:100%;max-width:650px;background:#FFF;border-radius:30px;border:1px solid rgba(0,91,92,0.3);box-shadow:0 8px 32px rgba(0,0,0,0.15);padding:6px 8px 6px 20px}}
@@ -431,7 +435,6 @@ body{{margin:0;padding:0;width:100%;height:100%;background-image:url('{bg_base64
 </div>
 
 <script>
-// AMANKAN UTAMA: Buat fallback global checkEnter agar onkeydown tidak melempar ReferenceError
 window.checkEnter = function(e) {{
     if (e.key === 'Enter' && !e.shiftKey) {{
         e.preventDefault();
@@ -439,7 +442,6 @@ window.checkEnter = function(e) {{
     }}
 }};
 
-// Panel Control Wishlist UI
 function toggleKeranjang() {{
     document.getElementById('cartPanel').classList.toggle('open');
     document.getElementById('cartOverlay').classList.toggle('open');
@@ -485,7 +487,6 @@ function findChatInput() {{
     return null;
 }}
 
-// JANTUNG INJEKSI: Mengisi text murni bypass Virtual DOM React dan Trigger Klik Tombol Submit Streamlit
 function fireToInput(text) {{
     if (!text) return;
     var el = findChatInput();
@@ -517,7 +518,6 @@ function fireToInput(text) {{
                 submitBtn.disabled = false;
                 submitBtn.click();
             }} else {{
-                // Fallback kirim event enter jika tombol disembunyikan total
                 var enterEvent = new KeyboardEvent('keydown', {{
                     key: 'Enter', keyCode: 13, code: 'Enter', which: 13, bubbles: true, cancelable: true, composed: true
                 }});
@@ -529,12 +529,10 @@ function fireToInput(text) {{
     }}, 100);
 }}
 
-// Fungsi utama pemicu dari tombol menu cepat & wishlist item
 function sendMsg(text) {{
     fireToInput(text);
 }}
 
-// Fungsi kirim dari custom textarea input bawah (uiInput)
 function submitChat() {{
     var uiInp = document.getElementById('uiInput');
     if (!uiInp) return;
@@ -542,10 +540,9 @@ function submitChat() {{
     if (!text) return;
     
     fireToInput(text);
-    uiInp.value = ''; // Kosongkan kembali wadah input visual custom
+    uiInp.value = '';
 }}
 
-// Auto scroll down area pesan chat dan riwayat
 var c = document.getElementById('chatMessages'); if(c) c.scrollTop = c.scrollHeight;
 var h = document.getElementById('historyList');  if(h) h.scrollTop = h.scrollHeight;
 </script>
