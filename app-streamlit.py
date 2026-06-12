@@ -300,7 +300,7 @@ body{{margin:0;padding:0;width:100%;height:100%;background-image:url('{bg_base64
 :root{{--pt:rgba(255,255,255,0.75);--pc:rgba(255,255,255,0.40);--w:#FFFFFF;--tt:#005B5C;--tm:#0D7A7B;--tl:#E4F2F1;--tg:#0F2C2C;--ts:#5F7D7D;--r:#E74C3C;--rm:#FDEAEA}}
 .app-wrapper{{display:flex;justify-content:center;align-items:center;width:100%;height:100%;padding:20px}}
 .container{{display:flex;width:100%;max-width:1200px;height:92vh;background:rgba(255,255,255,0.15);backdrop-filter:blur(20px);box-shadow:0 20px 50px rgba(0,0,0,0.12);border-radius:24px;overflow:hidden;border:1px solid rgba(255,255,255,0.35);position:relative}}
-.sidebar{{width:280px;background:var(--pt);display:flex;flex-direction:column;padding:24px;flex-shrink:0;border-right:1px solid rgba(255,255,255,0.25);height:100%;overflow-y:auto}}
+.sidebar{{width:280px;background:var(--pt);display:flex;flex-direction:column;padding:24px;flex-shrink:0;border-right:1px solid rgba(255,255,255,0.25);height:100%;overflow-y:auto;position:relative;z-index:10}}
 .sidebar-header{{display:flex;align-items:center;gap:12px}}
 .bot-avatar-sidebar{{width:46px;height:46px;border-radius:50%;background-image:url('https://images.unsplash.com/photo-1506929562872-bb421503ef21?w=150');background-size:cover;background-position:center}}
 .bot-info h2{{color:var(--tt);font-size:17px;font-weight:700;margin:0}}
@@ -379,7 +379,7 @@ body{{margin:0;padding:0;width:100%;height:100%;background-image:url('{bg_base64
 .custom-input-btn:hover{{background:#0D7A7B}}
 ::-webkit-scrollbar{{width:5px}}
 ::-webkit-scrollbar-thumb{{background:rgba(0,91,92,0.2);border-radius:10px}}
-.cart-overlay{{display:none;position:fixed;inset:0;z-index:1000;pointer-events:none}}
+.cart-overlay{{display:none;position:absolute;top:0;right:0;bottom:0;left:280px;z-index:998;pointer-events:none;border-radius:0 24px 24px 0}}
 .cart-overlay.open{{display:block;pointer-events:all}}
 </style>
 

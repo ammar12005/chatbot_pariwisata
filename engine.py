@@ -185,6 +185,21 @@ def cari_dest_dari_semua(keyword: str):
     return None, None, None
 
 
+def bersihkan_keyword(keyword: str) -> str:
+    """Buang kata-kata pelengkap dari keyword pencarian."""
+    keyword_clean = keyword.lower().strip()
+    kata_pelengkap = [
+        "taman wisata nasional", "wisata taman nasional",
+        "tiket", "wisata", "taman", "destinasi"
+    ]
+    for kata in kata_pelengkap:
+        if keyword_clean.startswith(kata + " "):
+            keyword_clean = keyword_clean.replace(kata + " ", "", 1).strip()
+        elif keyword_clean == kata:
+            keyword_clean = ""
+    return keyword_clean
+
+
 # ─────────────────────────────────────────────────
 #  PEMROSESAN PESAN UTAMA
 # ─────────────────────────────────────────────────
@@ -198,23 +213,68 @@ def proses_pesan(pesan: str, session_id: str = "default") -> str:
     if sedang_transaksi(session_id):
         return proses_transaksi(pesan, session_id)
 
-    # ── CEK STATUS BOOKING (dengan atau tanpa kata "booking") ────
-    # Format: "cek booking WB-XXXXX" atau "cek WB-XXXXX"
+    # ── CEK STATUS BOOKING ────────────────────────────────────────
     if teks_lower.startswith("cek booking "):
         kode = teks.split(" ", 2)[2].strip()
-        # Buang prefix "booking" jika ikut terbawa (jaga-jaga)
         if kode.lower().startswith("booking "):
             kode = kode.split(" ", 1)[1].strip()
         return cek_booking(kode)
 
     if teks_lower.startswith("cek "):
         kode = teks.split(" ", 1)[1].strip()
-        # Buang prefix "booking" jika ada
         if kode.lower().startswith("booking "):
             kode = kode.split(" ", 1)[1].strip()
-        # Pastikan yang dimaksud adalah kode booking (bukan nama destinasi)
         if "-" in kode or kode.upper() == kode:
             return cek_booking(kode)
+
+    # ── PERINTAH GLOBAL (berlaku di semua langkah) ────────────────
+
+    # RESET
+    if teks_lower in ("reset", "mulai ulang", "restart", "home"):
+        reset_sesi(session_id)
+        return SALAM_AWAL
+
+    # KEMBALI - navigasi mundur satu langkah
+    if teks_lower in ("kembali", "back", "balik"):
+        if sesi["langkah"] == "pilih_kota":
+            reset_sesi(session_id)
+            sesi2 = get_sesi(session_id)
+            sesi2["langkah"] = "pilih_provinsi"
+            return daftar_provinsi_teks()
+        elif sesi["langkah"] == "lihat_destinasi":
+            sesi["langkah"] = "pilih_kota"
+            sesi["kota"] = None
+            return daftar_kota_teks(sesi["provinsi"])
+        else:
+            reset_sesi(session_id)
+            return SALAM_AWAL
+
+    # PROVINSI / MENU - selalu reset & tampilkan daftar provinsi
+    if teks_lower in ("provinsi", "daftar provinsi", "list provinsi", "menu"):
+        reset_sesi(session_id)
+        sesi2 = get_sesi(session_id)
+        sesi2["langkah"] = "pilih_provinsi"
+        return daftar_provinsi_teks()
+
+    # CARI - berlaku di semua langkah, tidak peduli state sesi
+    if teks_lower.startswith("cari "):
+        keyword = teks.split(" ", 1)[1].strip()
+        hasil = cari_destinasi(keyword.lower())
+        if hasil:
+            return hasil_cari_teks(keyword, hasil)
+        # Coba cocokkan sebagai provinsi
+        prov = cocokkan_provinsi(keyword.lower())
+        if prov:
+            sesi["provinsi"] = prov
+            sesi["langkah"] = "pilih_kota"
+            return daftar_kota_teks(prov)
+        return (
+            f"😔 Destinasi *'{keyword}'* tidak ditemukan.\n\n"
+            "Coba dengan:\n"
+            "• Nama kota: *cari semarang*\n"
+            "• Nama provinsi: *cari bali*\n"
+            "• Nama tempat: *cari borobudur*"
+        )
 
     # ── KERANJANG: LIHAT ─────────────────────────────────────────
     if teks_lower in ("keranjang", "wishlist", "simpanan", "cart",
@@ -234,65 +294,48 @@ def proses_pesan(pesan: str, session_id: str = "default") -> str:
     # ── KERANJANG: SIMPAN DESTINASI ──────────────────────────────
     if teks_lower.startswith("simpan "):
         keyword = teks.split(" ", 1)[1].strip()
-        
-        # --- PROSES PEMBERSIHAN KEYWORD (Kunci Perbaikan) ---
-        keyword_clean = keyword.lower()
-        # Buang kata-kata sampah/pelengkap yang sering ikut terbawa input UI
-        kata_pelengkap = ["tiket", "taman wisata nasional", "wisata taman nasional", "wisata", "taman", "destinasi"]
-        for kata in kata_pelengkap:
-            if keyword_clean.startswith(kata + " "):
-                keyword_clean = keyword_clean.replace(kata + " ", "", 1).strip()
-            elif keyword_clean.startswith(kata):
-                keyword_clean = keyword_clean.replace(kata, "", 1).strip()
-        # ----------------------------------------------------
+        keyword_clean = bersihkan_keyword(keyword)
 
         if keyword.lower() not in ("keranjang", "menu", "semua") and keyword_clean != "":
-            # Gunakan keyword_clean yang sudah murni nama tempatnya saja untuk pencarian
             dest, provinsi, kota = cari_dest_dari_semua(keyword_clean)
             if dest:
                 return tambah_ke_keranjang(session_id, dest, provinsi, kota)
-                
-            # Coba cari dari konteks sesi saat ini menggunakan keyword_clean
+
+            # Coba dari konteks sesi saat ini
             if sesi.get("provinsi") and sesi.get("kota"):
                 dest_list = get_destinasi_by_kota(sesi["provinsi"], sesi["kota"])
                 for d in dest_list:
                     if keyword_clean in d["nama"].lower():
                         return tambah_ke_keranjang(session_id, d, sesi["provinsi"], sesi["kota"])
-                        
+
             return (
                 f"😔 Destinasi *'{keyword}'* tidak ditemukan.\n\n"
                 f"Coba: *cari {keyword_clean}* untuk menemukan destinasinya dulu."
             )
 
-     # ── PESAN TIKET LANGSUNG ─────────────────────────────────────
     # ── PESAN TIKET LANGSUNG ─────────────────────────────────────
     if teks_lower.startswith("pesan "):
         keyword = teks.split(" ", 1)[1].strip()
-        
-        # --- PROSES PEMBERSIHAN KEYWORD (Agar Pesan Tiket Juga Lancar) ---
-        keyword_clean = keyword.lower()
-        kata_pelengkap = ["tiket", "taman wisata nasional", "wisata taman nasional", "wisata", "taman", "destinasi"]
-        for kata in kata_pelengkap:
-            if keyword_clean.startswith(kata + " "):
-                keyword_clean = keyword_clean.replace(kata + " ", "", 1).strip()
-            elif keyword_clean.startswith(kata):
-                keyword_clean = keyword_clean.replace(kata, "", 1).strip()
-        # -----------------------------------------------------------------
+        keyword_clean = bersihkan_keyword(keyword)
 
         if keyword.lower() not in ("tiket", "menu", "provinsi") and keyword_clean != "":
-            # Gunakan keyword_clean hasil filter untuk mencari destinasi
             dest, provinsi, kota = cari_dest_dari_semua(keyword_clean)
             if dest:
                 mulai_transaksi(session_id, dest, provinsi, kota)
                 return teks_mulai_pesan(dest, provinsi, kota)
-            
-            # Coba cari dari konteks sesi saat ini jika pencarian global meleset
+
+            # Coba dari konteks sesi saat ini
             if sesi.get("provinsi") and sesi.get("kota"):
                 dest_list = get_destinasi_by_kota(sesi["provinsi"], sesi["kota"])
                 for d in dest_list:
                     if keyword_clean in d["nama"].lower():
                         mulai_transaksi(session_id, d, sesi["provinsi"], sesi["kota"])
                         return teks_mulai_pesan(d, sesi["provinsi"], sesi["kota"])
+
+            return (
+                f"😔 Destinasi *'{keyword}'* tidak ditemukan.\n\n"
+                f"Coba: *cari {keyword_clean}* untuk menemukan destinasinya dulu."
+            )
         else:
             return SALAM_AWAL
 
