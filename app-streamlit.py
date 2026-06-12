@@ -173,7 +173,6 @@ def render_histori_html():
                      
             # Escape single quote agar aman saat dipassing ke fungsi JavaScript onclick
             kd_esc = kode.replace("'", "\\'")
-            dest_esc = dest.replace("'", "\\'")
             
             html += f"""<button class="history-item" onclick="sendMsg('cek booking {kd_esc}')">
                 <div class="history-item-kode">🎫 {kode}</div>
@@ -223,7 +222,7 @@ def render_keranjang_html():
                     </div>
                 </div>
                 <div class="cart-item-actions-row">
-                   <button class="cart-btn-pesan" onclick='sendMsg("pesan " + "{ns}")'><i class="fa-solid fa-ticket"></i> Pesan Tiket</button>
+                   <button class="cart-btn-pesan" onclick="sendMsg('pesan {ns}')"><i class="fa-solid fa-ticket"></i> Pesan Tiket</button>
                     <button class="cart-action-btn btn-view" onclick="sendMsg('cari {ns}')"><i class="fa-solid fa-magnifying-glass"></i></button>
                     <button class="cart-action-btn btn-delete" onclick="sendMsg('hapus keranjang {ns}')"><i class="fa-solid fa-trash"></i></button>
                 </div></div>"""
@@ -432,18 +431,29 @@ body{{margin:0;padding:0;width:100%;height:100%;background-image:url('{bg_base64
 </div>
 
 <script>
-// ═══════════════════════════════════════════════════════════
-// BRIDGE RE-ENGINEERED: Solusi Anti-Gagal Tembus Iframe (FIXED)
-// ═══════════════════════════════════════════════════════════
+// AMANKAN UTAMA: Buat fallback global checkEnter agar onkeydown tidak melempar ReferenceError
+window.checkEnter = function(e) {{
+    if (e.key === 'Enter' && !e.shiftKey) {{
+        e.preventDefault();
+        submitChat();
+    }}
+}};
+
+// Panel Control Wishlist UI
+function toggleKeranjang() {{
+    document.getElementById('cartPanel').classList.toggle('open');
+    document.getElementById('cartOverlay').classList.toggle('open');
+}}
+function tutupKeranjang() {{
+    document.getElementById('cartPanel').classList.remove('open');
+    document.getElementById('cartOverlay').classList.remove('open');
+}}
 
 function findChatInput() {{
     var docs = [document];
-    
-    // Tarik window parent utama (Streamlit core)
     try {{ if (window.parent && window.parent.document) docs.push(window.parent.document); }} catch(e) {{}}
     try {{ if (window.top && window.top.document) docs.push(window.top.document); }} catch(e) {{}}
 
-    // Cari di seluruh tumpukan iframe induk secara rekursif
     if (window.parent) {{
         try {{
             var allIframes = window.parent.document.querySelectorAll('iframe');
@@ -456,7 +466,6 @@ function findChatInput() {{
         }} catch(e) {{}}
     }}
 
-    // Selector komprehensif mengikuti struktur DOM Streamlit versi terbaru
     var selectors = [
         'textarea[data-testid="stChatInputTextArea"]',
         '[data-testid="stChatInput"] textarea',
@@ -469,17 +478,22 @@ function findChatInput() {{
         for (var s = 0; s < selectors.length; s++) {{
             try {{
                 var el = docs[d].querySelector(selectors[s]);
-                if (el && el.id !== 'uiInput') return el; // Pastikan bukan custom UI kita sendiri
+                if (el && el.id !== 'uiInput') return el;
             }} catch(e) {{}}
         }}
     }}
     return null;
 }}
 
-function fireToInput(el, text) {{
-    if (!el) return;
+// JANTUNG INJEKSI: Mengisi text murni bypass Virtual DOM React dan Trigger Klik Tombol Submit Streamlit
+function fireToInput(text) {{
+    if (!text) return;
+    var el = findChatInput();
+    if (!el) {{
+        console.error("Input Streamlit native tidak ditemukan.");
+        return;
+    }}
     
-    // Set value menggunakan Native Setter agar ter-track oleh React internal State Streamlit
     try {{
         var proto = el.ownerDocument.defaultView.HTMLTextAreaElement.prototype;
         var setter = Object.getOwnPropertyDescriptor(proto, 'value');
@@ -492,78 +506,50 @@ function fireToInput(el, text) {{
         el.value = text;
     }}
     
-    // Kirim sinyal perubahan ke React Virtual DOM
     el.dispatchEvent(new Event('input',  {{ bubbles: true, composed: true }}));
     el.dispatchEvent(new Event('change', {{ bubbles: true, composed: true }}));
-    el.focus();
     
-    // Eksekusi Enter dengan interval super tipis (150ms) agar state sinkron terlebih dahulu
     setTimeout(function() {{
-        var enterEvents = ['keydown', 'keypress', 'keyup'];
-        enterEvents.forEach(function(evType) {{
-            var kEvent = new KeyboardEvent(evType, {{
-                key: 'Enter',
-                code: 'Enter',
-                keyCode: 13,
-                which: 13,
-                bubbles: true,
-                cancelable: true,
-                composed: true
-            }});
-            el.dispatchEvent(kEvent);
-        }});
-        
-        // Skenario cadangan jika form pembungkus membutuhkan instruksi submit langsung
         try {{
-            var form = el.closest('form');
-            if (form) {{
-                var submitBtn = form.querySelector('button[data-testid="stChatInputSubmitButton"]');
-                if (submitBtn) submitBtn.click();
+            var form = el.closest('form') || el.form;
+            var submitBtn = form ? (form.querySelector('button[data-testid="stChatInputSubmitButton"]') || form.querySelector('button')) : null;
+            if (submitBtn) {{
+                submitBtn.disabled = false;
+                submitBtn.click();
+            }} else {{
+                // Fallback kirim event enter jika tombol disembunyikan total
+                var enterEvent = new KeyboardEvent('keydown', {{
+                    key: 'Enter', keyCode: 13, code: 'Enter', which: 13, bubbles: true, cancelable: true, composed: true
+                }});
+                el.dispatchEvent(enterEvent);
             }}
-        }} catch(e) {{}}
-    }}, 150);
+        }} catch(e) {{
+            console.error("Gagal submit form:", e);
+        }}
+    }}, 100);
 }}
 
+// Fungsi utama pemicu dari tombol menu cepat & wishlist item
 function sendMsg(text) {{
-    tutupKeranjang();
-    text = (text || '').trim();
-    if (!text) return;
-
-    var nativeInput = findChatInput();
-    if (nativeInput) {{
-        fireToInput(nativeInput, text);
-    }} else {{
-        console.error("Bridge Error: st.chat_input target tidak ditemukan!");
-    }}
+    fireToInput(text);
 }}
 
-function toggleKeranjang() {{
-    var p=document.getElementById('cartPanel'), b=document.getElementById('cartBtn'), o=document.getElementById('cartOverlay');
-    if (p.classList.contains('open')) tutupKeranjang();
-    else {{ p.classList.add('open'); b.classList.add('active'); o.classList.add('open'); }}
-}}
-function tutupKeranjang() {{
-    var p=document.getElementById('cartPanel'), b=document.getElementById('cartBtn'), o=document.getElementById('cartOverlay');
-    if(p) p.classList.remove('open');
-    if(b) b.classList.remove('active');
-    if(o) o.classList.remove('open');
-}}
-function checkEnter(e) {{
-    if (e.key==='Enter' && !e.shiftKey) {{ e.preventDefault(); submitChat(); }}
-}}
+// Fungsi kirim dari custom textarea input bawah (uiInput)
 function submitChat() {{
-    var ui=document.getElementById('uiInput');
-    if (!ui || !ui.value.trim()) return;
-    var v=ui.value.trim(); 
-    ui.value=''; 
-    sendMsg(v);
+    var uiInp = document.getElementById('uiInput');
+    if (!uiInp) return;
+    var text = uiInp.value.strip ? uiInp.value.strip() : uiInp.value.trim();
+    if (!text) return;
+    
+    fireToInput(text);
+    uiInp.value = ''; // Kosongkan kembali wadah input visual custom
 }}
-// Auto scroll down area pesan chat
-var c=document.getElementById('chatMessages'); if(c) c.scrollTop=c.scrollHeight;
-var h=document.getElementById('historyList');  if(h) h.scrollTop=h.scrollHeight;
-</script>
-"""  # <--- Pastikan tanda kutip tiga ini menutup f-string dengan benar
 
-# ─── Render HTML komponen secara penuh ────────────────────────────────────────
-# Naikkan height ke 1000 dan aktifkan scrolling=True agar frame interaksinya terbuka penuh
-components.html(full_html, height=1000, scrolling=True)
+// Auto scroll down area pesan chat dan riwayat
+var c = document.getElementById('chatMessages'); if(c) c.scrollTop = c.scrollHeight;
+var h = document.getElementById('historyList');  if(h) h.scrollTop = h.scrollHeight;
+</script>
+"""
+
+# ─── RENDER UTAMA STREAMLIT COMPONENT ────────────────────────────────────────
+components.html(full_html, height=1000, scrolling=False)
